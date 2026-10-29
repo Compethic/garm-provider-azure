@@ -289,8 +289,11 @@ func (a *AzureCli) CreateNetWorkInterface(ctx context.Context, baseName, subnetI
 }
 
 func (a *AzureCli) CreatePublicIP(ctx context.Context, baseName string) (*armnetwork.PublicIPAddress, error) {
+	// Standard, not the API's Basic default: Azure retired Basic public IPs on
+	// 2025-09-30, and new ones fail with IPv4BasicSkuPublicIpCountLimitReached.
 	parameters := armnetwork.PublicIPAddress{
 		Location: to.Ptr(a.location),
+		SKU:      &armnetwork.PublicIPAddressSKU{Name: to.Ptr(armnetwork.PublicIPAddressSKUNameStandard)},
 		Properties: &armnetwork.PublicIPAddressPropertiesFormat{
 			PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
 		},

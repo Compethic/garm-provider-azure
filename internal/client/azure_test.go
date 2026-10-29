@@ -408,7 +408,9 @@ func TestCreatePublicIP(t *testing.T) {
 	ctx := context.Background()
 	baseName := "test"
 	myPublicIPAdressesServer := armnetworkfake.PublicIPAddressesServer{}
+	var requestedSKU *armnetwork.PublicIPAddressSKU
 	myPublicIPAdressesServer.BeginCreateOrUpdate = func(ctx context.Context, resourceGroupName string, publicIPAddressName string, parameters armnetwork.PublicIPAddress, options *armnetwork.PublicIPAddressesClientBeginCreateOrUpdateOptions) (resp azfake.PollerResponder[armnetwork.PublicIPAddressesClientCreateOrUpdateResponse], errResp azfake.ErrorResponder) {
+		requestedSKU = parameters.SKU
 		resp.SetTerminalResponse(200, armnetwork.PublicIPAddressesClientCreateOrUpdateResponse{
 			PublicIPAddress: armnetwork.PublicIPAddress{
 				Location: to.Ptr("eastus"),
@@ -452,6 +454,7 @@ func TestCreatePublicIP(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "eastus", *resp.Location)
 	assert.Equal(t, armnetwork.IPAllocationMethodStatic, *resp.Properties.PublicIPAllocationMethod)
+	assert.Equal(t, armnetwork.PublicIPAddressSKUNameStandard, *requestedSKU.Name)
 }
 
 func TestCreateVirtualMachine(t *testing.T) {
