@@ -30,6 +30,13 @@ location = "westeurope"
 use_ephemeral_storage = true
 virtual_network_cidr = "10.0.0.0/16"
 use_accelerated_networking = true
+# Optional. Put every runner's resources in this existing resource group instead
+# of one new resource group per runner. The provider's identity then only needs
+# Contributor on this group (plus Microsoft.Compute/skus/read on the subscription
+# when use_ephemeral_storage is on), not the right to create and delete resource
+# groups across the subscription. Pair it with disable_isolated_networks and
+# vnet_subnet_id so runners share one subnet.
+# resource_group = "rg-garm-runners"
 
 [credentials]
 subscription_id = "sample_sub_id"
@@ -139,6 +146,10 @@ To this end, this provider supports the following extra specs schema:
 		"use_accelerated_networking": {
 			"type": "boolean",
 			"description": "Use accelerated networking for the VM."
+		},
+		"use_spot": {
+			"type": "boolean",
+			"description": "Create the VM as an Azure Spot VM. Evicted VMs are deleted, and the price is capped at the pay-as-you-go price."
 		},
 		"open_inbound_ports": {
 			"type": "object",

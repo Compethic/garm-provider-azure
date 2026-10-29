@@ -116,6 +116,7 @@ type extraSpecs struct {
 	UseAcceleratedNetworking *bool                                     `json:"use_accelerated_networking,omitempty" jsonschema:"description=Use accelerated networking for the VM."`
 	VnetSubnetID             string                                    `json:"vnet_subnet_id,omitempty" jsonschema:"description=The ID of the subnet to use for the VM. Must be in the same region as the VM. This is required if disable_isolated_networks is set to true, otherwise it is ignored."`
 	DisableIsolatedNetworks  *bool                                     `json:"disable_isolated_networks,omitempty" jsonschema:"description=Disable network isolation for the VM."`
+	UseSpot                  *bool                                     `json:"use_spot,omitempty" jsonschema:"description=Create the VM as an Azure Spot VM. Evicted VMs are deleted, and the price is capped at the pay-as-you-go price."`
 	DisableUpdates           *bool                                     `json:"disable_updates,omitempty" jsonschema:"description=Disable automatic updates on the VM."`
 	EnableBootDebug          *bool                                     `json:"enable_boot_debug,omitempty" jsonschema:"description=Enable boot debug on the VM."`
 	ExtraPackages            []string                                  `json:"extra_packages,omitempty" jsonschema:"description=Extra packages to install on the VM."`
@@ -246,6 +247,10 @@ func GetRunnerSpecFromBootstrapParams(data params.BootstrapInstance, controllerI
 		spec.DisableIsolatedNetworks = *extraSpecs.DisableIsolatedNetworks
 	}
 
+	if extraSpecs.UseSpot != nil {
+		spec.UseSpot = *extraSpecs.UseSpot
+	}
+
 	if extraSpecs.VnetSubnetID != "" && spec.DisableIsolatedNetworks {
 		spec.VnetSubnetID = extraSpecs.VnetSubnetID
 	}
@@ -282,6 +287,7 @@ type RunnerSpec struct {
 	DisableUpdates           bool
 	ExtraPackages            []string
 	EnableBootDebug          bool
+	UseSpot                  bool
 }
 
 func (r RunnerSpec) Validate() error {
@@ -540,6 +546,9 @@ func (r RunnerSpec) GetNewVMProperties(networkInterfaceID string, sizeSpec VMSiz
 				ManagedDisk:      managedDiskParams,
 				DiffDiskSettings: diffSettings,
 				DiskSizeGB:       &diskSize,
+				// Without a resource group of its own to delete, a runner's managed
+				// OS disk would outlive it; spot evictions delete it the same way.
+				DeleteOption: to.Ptr(armcompute.DiskDeleteOptionTypesDelete),
 			},
 		},
 		HardwareProfile: &armcompute.HardwareProfile{
@@ -560,6 +569,15 @@ func (r RunnerSpec) GetNewVMProperties(networkInterfaceID string, sizeSpec VMSiz
 			},
 		},
 		SecurityProfile: securityProfile,
+	}
+
+	if r.UseSpot {
+		// Delete, not Deallocate: a deallocated runner would hold its disk and
+		// quota while GARM replaces it. A max price of -1 means Azure evicts only
+		// for capacity, never because the spot price rose.
+		properties.Priority = to.Ptr(armcompute.VirtualMachinePriorityTypesSpot)
+		properties.EvictionPolicy = to.Ptr(armcompute.VirtualMachineEvictionPolicyTypesDelete)
+		properties.BillingProfile = &armcompute.BillingProfile{MaxPrice: to.Ptr(float64(-1))}
 	}
 
 	if r.BootstrapParams.OSType == params.Linux {

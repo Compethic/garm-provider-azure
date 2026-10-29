@@ -17,6 +17,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -1047,4 +1048,66 @@ func TestStart(t *testing.T) {
 
 	err = a.Start(ctx, instance)
 	assert.NoError(t, err)
+}
+
+func TestDeleteInstanceInSharedResourceGroupLeavesResourceGroupsAlone(t *testing.T) {
+	// rgCli is nil: deleting a runner from a shared group must never reach the
+	// resource group API, and a runner whose resources are all gone already is
+	// deleted successfully.
+	var vmDeletedIn string
+	notFound := func() azfake.ErrorResponder {
+		var errResp azfake.ErrorResponder
+		errResp.SetResponseError(404, "NotFound")
+		return errResp
+	}
+	vmServer := armcomputefake.VirtualMachinesServer{
+		BeginDelete: func(_ context.Context, rg, _ string, _ *armcompute.VirtualMachinesClientBeginDeleteOptions) (resp azfake.PollerResponder[armcompute.VirtualMachinesClientDeleteResponse], errResp azfake.ErrorResponder) {
+			vmDeletedIn = rg
+			return resp, notFound()
+		},
+	}
+	nicServer := armnetworkfake.InterfacesServer{
+		BeginDelete: func(context.Context, string, string, *armnetwork.InterfacesClientBeginDeleteOptions) (resp azfake.PollerResponder[armnetwork.InterfacesClientDeleteResponse], errResp azfake.ErrorResponder) {
+			return resp, notFound()
+		},
+	}
+	ipServer := armnetworkfake.PublicIPAddressesServer{
+		BeginDelete: func(context.Context, string, string, *armnetwork.PublicIPAddressesClientBeginDeleteOptions) (resp azfake.PollerResponder[armnetwork.PublicIPAddressesClientDeleteResponse], errResp azfake.ErrorResponder) {
+			return resp, notFound()
+		},
+	}
+	nsgServer := armnetworkfake.SecurityGroupsServer{
+		BeginDelete: func(context.Context, string, string, *armnetwork.SecurityGroupsClientBeginDeleteOptions) (resp azfake.PollerResponder[armnetwork.SecurityGroupsClientDeleteResponse], errResp azfake.ErrorResponder) {
+			return resp, notFound()
+		},
+	}
+	netServer := armnetworkfake.VirtualNetworksServer{
+		BeginDelete: func(context.Context, string, string, *armnetwork.VirtualNetworksClientBeginDeleteOptions) (resp azfake.PollerResponder[armnetwork.VirtualNetworksClientDeleteResponse], errResp azfake.ErrorResponder) {
+			return resp, notFound()
+		},
+	}
+	opts := func(transport interface {
+		Do(*http.Request) (*http.Response, error)
+	}) *policy.ClientOptions {
+		return &policy.ClientOptions{ClientOptions: azcore.ClientOptions{Transport: transport}}
+	}
+	vmCli, err := armcompute.NewVirtualMachinesClient("fake-id", &azfake.TokenCredential{}, opts(armcomputefake.NewVirtualMachinesServerTransport(&vmServer)))
+	assert.NoError(t, err)
+	nicCli, err := armnetwork.NewInterfacesClient("fake-id", &azfake.TokenCredential{}, opts(armnetworkfake.NewInterfacesServerTransport(&nicServer)))
+	assert.NoError(t, err)
+	ipCli, err := armnetwork.NewPublicIPAddressesClient("fake-id", &azfake.TokenCredential{}, opts(armnetworkfake.NewPublicIPAddressesServerTransport(&ipServer)))
+	assert.NoError(t, err)
+	nsgCli, err := armnetwork.NewSecurityGroupsClient("fake-id", &azfake.TokenCredential{}, opts(armnetworkfake.NewSecurityGroupsServerTransport(&nsgServer)))
+	assert.NoError(t, err)
+	netCli, err := armnetwork.NewVirtualNetworksClient("fake-id", &azfake.TokenCredential{}, opts(armnetworkfake.NewVirtualNetworksServerTransport(&netServer)))
+	assert.NoError(t, err)
+
+	cfg := &config.Config{Location: "eastus", ResourceGroup: "rg-runners"}
+	azCli := azclient.AzureCli{}
+	azCli.SetConfig(cfg)
+	azCli.SetClients(nil, netCli, nil, nsgCli, nicCli, vmCli, ipCli, nil, nil)
+	a := azureProvider{controllerID: "controllerID", azCli: &azCli, cfg: cfg}
+
+	assert.NoError(t, a.DeleteInstance(context.Background(), "runner-1"))
+	assert.Equal(t, "rg-runners", vmDeletedIn)
 }

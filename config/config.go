@@ -51,6 +51,11 @@ type Config struct {
 	UseAcceleratedNetworking bool   `toml:"use_accelerated_networking"`
 	VnetSubnetID             string `toml:"vnet_subnet_id"`
 	DisableIsolatedNetworks  bool   `toml:"disable_isolated_networks"`
+	// ResourceGroup, when set, places every runner's resources in this existing
+	// resource group instead of creating one resource group per runner. This lets
+	// the provider's identity be scoped to a single resource group rather than
+	// needing rights to create and delete resource groups across the subscription.
+	ResourceGroup string `toml:"resource_group"`
 }
 
 func (c *Config) Validate() error {

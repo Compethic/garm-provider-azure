@@ -54,7 +54,7 @@ type azureProvider struct {
 }
 
 // CreateInstance creates a new compute instance in the provider.
-func (a *azureProvider) CreateInstance(ctx context.Context, bootstrapParams params.BootstrapInstance) (params.ProviderInstance, error) {
+func (a *azureProvider) CreateInstance(ctx context.Context, bootstrapParams params.BootstrapInstance) (_ params.ProviderInstance, err error) {
 	runnerSpec, err := spec.GetRunnerSpecFromBootstrapParams(bootstrapParams, a.controllerID, a.cfg)
 	if err != nil {
 		return params.ProviderInstance{}, fmt.Errorf("failed to generate spec: %w", err)
@@ -90,14 +90,17 @@ func (a *azureProvider) CreateInstance(ctx context.Context, bootstrapParams para
 		}
 	}
 
-	_, err = a.azCli.CreateResourceGroup(ctx, runnerSpec.BootstrapParams.Name, runnerSpec.Tags)
-	if err != nil {
-		return params.ProviderInstance{}, fmt.Errorf("failed to create resource group: %w", err)
+	if a.cfg.ResourceGroup == "" {
+		if _, err := a.azCli.CreateResourceGroup(ctx, runnerSpec.BootstrapParams.Name, runnerSpec.Tags); err != nil {
+			return params.ProviderInstance{}, fmt.Errorf("failed to create resource group: %w", err)
+		}
 	}
 
+	// err is the named result, so every failed return below, including those
+	// from an inner scope, cleans up what was already created.
 	defer func() {
 		if err != nil {
-			a.azCli.DeleteResourceGroup(ctx, runnerSpec.BootstrapParams.Name, true) //nolint
+			a.DeleteInstance(ctx, runnerSpec.BootstrapParams.Name) //nolint
 		}
 	}()
 
@@ -175,7 +178,12 @@ func (a *azureProvider) resolveSubnetID(ctx context.Context, runnerSpec *spec.Ru
 
 // Delete instance will delete the instance in a provider.
 func (a *azureProvider) DeleteInstance(ctx context.Context, instance string) error {
-	err := a.azCli.DeleteResourceGroup(ctx, instance, true)
+	var err error
+	if a.cfg.ResourceGroup != "" {
+		err = a.azCli.DeleteInstanceResources(ctx, instance)
+	} else {
+		err = a.azCli.DeleteResourceGroup(ctx, instance, true)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to delete instance: %w", err)
 	}

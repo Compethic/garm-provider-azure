@@ -16,12 +16,14 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v5"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v5"
@@ -150,6 +152,15 @@ func (a *AzureCli) SetClients(rgCli *armresources.ResourceGroupsClient, netCli *
 	a.resourceSKUCli = skuCli
 }
 
+// resourceGroup returns the resource group that holds the resources of the
+// runner named name: the configured shared group, or a group of its own.
+func (a *AzureCli) resourceGroup(name string) string {
+	if a.cfg != nil && a.cfg.ResourceGroup != "" {
+		return a.cfg.ResourceGroup
+	}
+	return name
+}
+
 func (a *AzureCli) CreateResourceGroup(ctx context.Context, name string, tags map[string]*string) (*armresources.ResourceGroup, error) {
 	parameters := armresources.ResourceGroup{
 		Location: to.Ptr(a.location),
@@ -176,7 +187,7 @@ func (a *AzureCli) CreateVirtualNetwork(ctx context.Context, baseName, spaceCIDR
 		},
 	}
 
-	pollerResponse, err := a.netCli.BeginCreateOrUpdate(ctx, baseName, baseName, parameters, nil)
+	pollerResponse, err := a.netCli.BeginCreateOrUpdate(ctx, a.resourceGroup(baseName), baseName, parameters, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +207,7 @@ func (a *AzureCli) CreateSubnet(ctx context.Context, baseName, subnetCIDR string
 		},
 	}
 
-	pollerResponse, err := a.subnetCli.BeginCreateOrUpdate(ctx, baseName, baseName, baseName, parameters, nil)
+	pollerResponse, err := a.subnetCli.BeginCreateOrUpdate(ctx, a.resourceGroup(baseName), baseName, baseName, parameters, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +233,7 @@ func (a *AzureCli) CreateNetworkSecurityGroup(ctx context.Context, baseName stri
 		},
 	}
 
-	pollerResponse, err := a.nsgCli.BeginCreateOrUpdate(ctx, baseName, baseName, parameters, nil)
+	pollerResponse, err := a.nsgCli.BeginCreateOrUpdate(ctx, a.resourceGroup(baseName), baseName, parameters, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +275,7 @@ func (a *AzureCli) CreateNetWorkInterface(ctx context.Context, baseName, subnetI
 		},
 	}
 
-	pollerResponse, err := a.nicCli.BeginCreateOrUpdate(ctx, baseName, baseName, parameters, nil)
+	pollerResponse, err := a.nicCli.BeginCreateOrUpdate(ctx, a.resourceGroup(baseName), baseName, parameters, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +296,7 @@ func (a *AzureCli) CreatePublicIP(ctx context.Context, baseName string) (*armnet
 		},
 	}
 
-	pollerResponse, err := a.pubIPCli.BeginCreateOrUpdate(ctx, baseName, baseName, parameters, nil)
+	pollerResponse, err := a.pubIPCli.BeginCreateOrUpdate(ctx, a.resourceGroup(baseName), baseName, parameters, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +326,7 @@ func (a *AzureCli) CreateVirtualMachine(ctx context.Context, spec *spec.RunnerSp
 		Properties: properties,
 	}
 
-	_, err = a.vmCli.BeginCreateOrUpdate(ctx, spec.BootstrapParams.Name, spec.BootstrapParams.Name, parameters, nil)
+	_, err = a.vmCli.BeginCreateOrUpdate(ctx, a.resourceGroup(spec.BootstrapParams.Name), spec.BootstrapParams.Name, parameters, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create VM: %w", err)
 	}
@@ -327,7 +338,7 @@ func (a *AzureCli) CreateVirtualMachine(ctx context.Context, spec *spec.RunnerSp
 	}
 
 	if computeExtension != nil {
-		_, err = a.extCli.BeginCreateOrUpdate(ctx, spec.BootstrapParams.Name, spec.BootstrapParams.Name, extName, *computeExtension, nil)
+		_, err = a.extCli.BeginCreateOrUpdate(ctx, a.resourceGroup(spec.BootstrapParams.Name), spec.BootstrapParams.Name, extName, *computeExtension, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create vm extension: %w", err)
 		}
@@ -425,7 +436,7 @@ func (a *AzureCli) GetInstance(ctx context.Context, vmName string) (armcompute.V
 	opts := &armcompute.VirtualMachinesClientGetOptions{
 		Expand: to.Ptr(armcompute.InstanceViewTypesInstanceView),
 	}
-	vm, err := a.vmCli.Get(ctx, vmName, vmName, opts)
+	vm, err := a.vmCli.Get(ctx, a.resourceGroup(vmName), vmName, opts)
 	if err != nil {
 		return armcompute.VirtualMachine{}, fmt.Errorf("failed to get VM: %w", err)
 	}
@@ -433,7 +444,7 @@ func (a *AzureCli) GetInstance(ctx context.Context, vmName string) (armcompute.V
 }
 
 func (a *AzureCli) DealocateVM(ctx context.Context, vmName string) error {
-	poller, err := a.vmCli.BeginDeallocate(ctx, vmName, vmName, nil)
+	poller, err := a.vmCli.BeginDeallocate(ctx, a.resourceGroup(vmName), vmName, nil)
 	if err != nil {
 		return fmt.Errorf("failed to dealocate VM: %w", err)
 	}
@@ -445,7 +456,7 @@ func (a *AzureCli) DealocateVM(ctx context.Context, vmName string) error {
 }
 
 func (a *AzureCli) StartVM(ctx context.Context, vmName string) error {
-	poller, err := a.vmCli.BeginStart(ctx, vmName, vmName, nil)
+	poller, err := a.vmCli.BeginStart(ctx, a.resourceGroup(vmName), vmName, nil)
 	if err != nil {
 		return fmt.Errorf("failed to start VM: %w", err)
 	}
@@ -458,27 +469,90 @@ func (a *AzureCli) StartVM(ctx context.Context, vmName string) error {
 }
 
 func (a *AzureCli) ListVirtualMachines(ctx context.Context, poolID string) ([]*armcompute.VirtualMachine, error) {
-	options := &armcompute.VirtualMachinesClientListAllOptions{}
+	vms, err := a.listAllVirtualMachines(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list virtual machines: %w", err)
+	}
 	var resp []*armcompute.VirtualMachine
-	pager := a.vmCli.NewListAllPager(options)
-	for pager.More() {
-		nextResult, err := pager.NextPage(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list virtual machines: %w", err)
+	for _, vm := range vms {
+		// Sadly, there is no server side filter by tags on this resource.
+		if vm.Tags == nil {
+			continue
 		}
-		if nextResult.VirtualMachineListResult.Value != nil {
-			for _, vm := range nextResult.VirtualMachineListResult.Value {
-				// Sadly, there is no server side filter by tags on this resource.
-				if vm.Tags == nil {
-					continue
-				}
-				tag, ok := vm.Tags[util.PoolIDTagName]
-				if !ok || *tag != poolID {
-					continue
-				}
-				resp = append(resp, vm)
-			}
+		tag, ok := vm.Tags[util.PoolIDTagName]
+		if !ok || *tag != poolID {
+			continue
 		}
+		resp = append(resp, vm)
 	}
 	return resp, nil
+}
+
+// listAllVirtualMachines lists the VMs in the shared resource group when one is
+// configured, so that an identity scoped to that group can still list them.
+func (a *AzureCli) listAllVirtualMachines(ctx context.Context) ([]*armcompute.VirtualMachine, error) {
+	var vms []*armcompute.VirtualMachine
+	if a.cfg != nil && a.cfg.ResourceGroup != "" {
+		pager := a.vmCli.NewListPager(a.cfg.ResourceGroup, nil)
+		for pager.More() {
+			page, err := pager.NextPage(ctx)
+			if err != nil {
+				return nil, err
+			}
+			vms = append(vms, page.VirtualMachineListResult.Value...)
+		}
+		return vms, nil
+	}
+	pager := a.vmCli.NewListAllPager(&armcompute.VirtualMachinesClientListAllOptions{})
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		vms = append(vms, page.VirtualMachineListResult.Value...)
+	}
+	return vms, nil
+}
+
+// DeleteInstanceResources deletes everything CreateInstance made for the runner
+// named name inside the shared resource group. It is the shared-group
+// counterpart of DeleteResourceGroup, so resources that are already gone are
+// skipped rather than reported, and the VM goes first because Azure refuses to
+// delete a NIC that is still attached. A spot eviction removes the VM on its
+// own and leaves the rest, which this cleans up.
+func (a *AzureCli) DeleteInstanceResources(ctx context.Context, name string) error {
+	rg := a.resourceGroup(name)
+	vmPoller, err := a.vmCli.BeginDelete(ctx, rg, name, &armcompute.VirtualMachinesClientBeginDeleteOptions{ForceDeletion: to.Ptr(true)})
+	if err := waitDeleted(ctx, vmPoller, err); err != nil {
+		return fmt.Errorf("failed to delete VM: %w", err)
+	}
+	nicPoller, err := a.nicCli.BeginDelete(ctx, rg, name, nil)
+	if err := waitDeleted(ctx, nicPoller, err); err != nil {
+		return fmt.Errorf("failed to delete NIC: %w", err)
+	}
+	ipPoller, err := a.pubIPCli.BeginDelete(ctx, rg, name, nil)
+	if err := waitDeleted(ctx, ipPoller, err); err != nil {
+		return fmt.Errorf("failed to delete public IP: %w", err)
+	}
+	nsgPoller, err := a.nsgCli.BeginDelete(ctx, rg, name, nil)
+	if err := waitDeleted(ctx, nsgPoller, err); err != nil {
+		return fmt.Errorf("failed to delete network security group: %w", err)
+	}
+	// Only runners with an isolated network have a virtual network of their own.
+	netPoller, err := a.netCli.BeginDelete(ctx, rg, name, nil)
+	if err := waitDeleted(ctx, netPoller, err); err != nil {
+		return fmt.Errorf("failed to delete virtual network: %w", err)
+	}
+	return nil
+}
+
+func waitDeleted[T any](ctx context.Context, poller *runtime.Poller[T], err error) error {
+	if err == nil {
+		_, err = poller.PollUntilDone(ctx, nil)
+	}
+	var respErr *azcore.ResponseError
+	if errors.As(err, &respErr) && respErr.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return err
 }
